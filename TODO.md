@@ -3,6 +3,7 @@
 
 
 ### High Priority Todos 
+- standardize how inputs are given: make really simple to start using, but can supply a .alignconfig file or something
 - make TEST script and sample files with ~1000 reads each, with maybe 8 samples in each test experiment, including single cell test also; find random dataset online for this
 - check adapter before trimming
 - should print some sort of log file that can be checked by alignall if run again on same files and used to set checkpoints	

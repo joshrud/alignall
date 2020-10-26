@@ -30,6 +30,6 @@
 200522 | Added whole exonic file for mouse
 200605 | Added an md5 generation step in case people wanted to submit data to GEO 
 200707 | Added ability to select "OTHER" for genome, so that we can do wacky mouse-rat-human hybrids without adding to this script 
-
+201026 | Added a function that shows all the commands I used to make a *working* rRNA intervals file, with the hopes it can eventually be applied to other genomes
 
 

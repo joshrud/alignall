@@ -1,35 +1,26 @@
 #!/usr/bin/env python3
 
-import subprocess, os, string #command line calls, path showing, string things?
-import multiprocessing #for parallelizing setuff
-import csv #not sure where this is used
-import math #not sure where this is used
-import sys #program control
-import argparse #for easy argument input
-import re #for regex searching
-import gzip #used for parsing fastq.gz files
-import socket #this is used for determining the hostname
-import json #this is used for counts (parsing kallisto run_info.json
+import subprocess
+import os
+import string
+import sys
+import multiprocessing 
+import argparse 
+import re
+import gzip
+import socket
+import json 
+import slack
+import PyRanges as pr
 from builtins import input
 from datetime import datetime
 from functools import partial
 from collections import OrderedDict
-import inspect
-import slack
 
 
-#now import auxiliary files
 import alignall_snp as snp 
-
-
-
 #import alignall_ChIP    #UNTESTED
 #import alignall_ATAC    #UNTESTED
-### will add more when these start actually working
-# from parseST import parseST
-# import xlrd
-
-#from normalize_seq_depth_and_signal_to_noise.defs import CountAlignedReads, BedReads, BedSlop, makeBedGraph, makeNormBedGraph, makeNormBigWig
 
 VERSION = 14.5 #finally begun new set of file creation, need a new repo and begin separating and testing the files as a single package
 
@@ -37,8 +28,8 @@ warningContinue = """ WARNING: No arguments were specified, running with the fol
 genome=MOUSE
 aligner=STAR
 fastqDir=fastq
-strand=3 (2nd strand)
-steps=alignAndCount
+strand=1 (forward strand)
+steps=alignandcount
 indel=no
 threads=6
 Are you sure you want to continue? (Y/N): """
@@ -50,23 +41,17 @@ steps = ''
 machine = socket.gethostname()
 cur_time = datetime.now().strftime("%y%m%d_%H%M%S") #a string representing the time when program executes
 EST_COUNTS = 3 #the column to extract counts from in abundance.tsv in kallisto alignments (4 would be TPM, may want this option later...)
-GATKbase="~/bin/gatk-4.0.11.0/gatk " #this was changed 191212 (only works for my own usage...)
+GATKbase="~/bin/gatk-4.0.11.0/gatk " 
 adapter = ""
-whitelistBarcodes = "/data/barcodes/3M-february-2018.txt" # because we're only aligning SC on the fgc server
-
-# project = os.getcwd()
-# project = project.split("/")[-1]
-# parseST(project)      ## this info should be used so that arguments 'genome' and 'strand' don't need to be used
+whitelistBarcodes = "/data/barcodes/3M-february-2018.txt" 
 
 parser = argparse.ArgumentParser(description="Align fastq reads.")
 parser.add_argument("-g", "--genome",                   default="MOUSE",                type=str,                       help="-g [--genome]       Chose from STAR indexes in /Volumes/Projects/Genomes/ \n Examples: MOUSE, HUMAN (default: MOUSE")
 parser.add_argument("-a", "--aligner",                  default="STAR",                 type=str,                       help="-a [--aligner]      Chose from kallisto (transcript level counts) or STAR (gene level counts) (default: STAR)")
-parser.add_argument("-rb", "--random_barcodes",                 action="store_true",                            		help="-rb [--random_barcodes]      Adds a 4n random barcode to BOTH sides of adapter seq, used for core's U01 stuff because of Paula's research")
 parser.add_argument("-ad", "--adapter",                 default="GATCGGAAGAGCACACGTCTGAACTCCAGTCAC",     type=str,      help="-ad [--adapter]      adapter to trim, default is GATCGGAAGAGCACACGTCTGAACTCCAGTCAC, another common one is Nextera transposase: CTGTCTCTTATACACATCTCCGAGCCCACGAGAC")
 parser.add_argument("-f", "--fastqDir",                 default="fastq",                type=str,                       help="-f [--fastqDir]     This is the directory in which to find the fastq files to align.\n default: ./fastq")
 parser.add_argument("-s", "--strand",                   default=1,                      type=int,                       help="-s [--strand]       This is the strand of the RNA-seq library prep. \nChoices are 0(unstranded: Ovation/Smartseq), 1 (first strand: Lexogen FWD, and Nugen Universal) and 2 (second strand: TruSeq). (default: 3)")
 parser.add_argument("-p", "--steps",                    default="alignandcount",        type=str,                       help="-p [--steps]        These are the steps in the pipeline to run.\nChoices include align, count, picard, alignandcount, callsnps, chip, atac, callpeaks, mirna, smallrna, scrna, scatac.(default: alignandcount)")
-parser.add_argument("-i", "--indel",                    default="no",                   type=str,                       help="-i [--indel]        Turn on (yes) or off (no) indel realignment(default: no)")
 parser.add_argument("-t", "--threads",                  default=6,                      type=int,                       help="-t [--threads]      Run this many samples concurrently.\nThis sets the number of GATK/picard samples to run in parallel.\nRecommend setting this to 1/3 total thread count on a given machine.\nThese java commands can often occupy 2-4 threads each.(default: 6)")
 parser.add_argument("--version",                                action="store_true",                           	 		help="[--version]         prints the version of the script and then exits") #will be very helpful for when I don't remember which version was used for a project, and what that means for the settings/changes
 args = parser.parse_args()
@@ -83,7 +68,6 @@ adapterSeq = args.adapter
 fastqDir = os.path.abspath(args.fastqDir)
 strand = args.strand
 steps = args.steps.lower()
-indel = args.indel
 threads = args.threads
 
 runSettings = "########### RAN AT: "+cur_time+"\n"
@@ -1333,7 +1317,24 @@ def generateMD5s():
 
 
 
-
+# this was mostly written down in order to track what I did to make the rRNA interval for hg38
+# convert a gtf to a ribosomal rna interval file and format the new file
+def getrRNAIntervals(input_gtf, output_bed):
+	if not os.path.isfile(input_gtf):
+		print("GTF file not found...")
+		return False 
+	gtf = pr.get_gtf(input_gtf)
+	gtf_rrna = gtf[(gtf.gene_biotype == "rRNA") | (gtf.gene_biotype == "Mt_rRNA")]
+	gtf_rrna_g = gtf_rrna[(gtf_rrna.Feature == "gene")]
+	gtf_rrna_g.to_bed(output_bed)
+	temp_bed = output_bed.replace(".bed", "_ts.bed")
+	final_bed = output_bed.replace("ts.bed", "_f.bed")
+	final_out = "final_out.txt" 
+	subprocess.call("tr -s '\t' '\t' < "+output_bed+" > "+temp_bed, shell=True)
+	subprocess.call("cut -f 1,2,3,6,9 "+temp_bed+" > "+final_bed, shell=True)
+	subprocess.call("""samtools view -H """+sample_bam+""" | awk 'BEGIN{FS=OFS="\t"}; $1 ~ /^@SQ/ {print $0}') """+
+		"""> """+final_out, shell=True)
+	return True
 
 # object for organizing fastq files that need to be run in alignment
 # one target can have an R1, R2, I1, and I2 file, but for SE50 will probably only have a R1 file
